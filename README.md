@@ -34,7 +34,7 @@ This README explains the thought process, assumptions, steps, and code structure
     - Ensured consistency with the original research code.
         - `pytest tests/test_transformers.py -v`
     - Reading and processing 1B records within 10 minutes.
-        - Status on local cluster with 4 workers, 2 threads per worker and 16GB memory limit:
+        - Status on local cluster with **4 workers**, **2 threads per worker** and **16GB memory limit**:
             - **~7mins** to transform and inverse transform **1B rows** of data.
             - **~5mins** to fit the BGM model on **10M rows** of data.
 2. Pending:
