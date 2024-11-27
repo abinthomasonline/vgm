@@ -12,7 +12,8 @@ This README explains the thought process, assumptions, steps, and code structure
 2. Scaling Considerations:
     - Scaling the research code is a priority. The model must be fit and the data transformed without loading everything into memory at once.
     - Dask is a natural choice due to its compatibility with numpy and suitability for data that isn't in the TB range.
-    - A local dask cluster should suffice for scaling, though minor vertical scaling might be needed to meet the 10-minute constraint.
+    - Using only a tiny subset of data for model fitting is simpler but doesn't align with the task's goals.
+    - Fitting multiple models in parallel and then combining the weights is also simpler but doesn't align with the task's goals.
 
 3. NumPy to Dask:
     - Subclass and modify scikit-learn's BGM (Bayesian Gaussian Mixture) implementation to use dask for large array operations.
@@ -21,22 +22,25 @@ This README explains the thought process, assumptions, steps, and code structure
 4. Inverse Transform Accuracy:
     - The research code has limitations in inverse transforming extreme values, which might be due to insufficient convergence or arbitrary scaling constant "4". These need tuning.
 
-5. Alternate Approach:
-    - Using only a subset of data for model fitting is simpler but doesn't align with the task's goals.
     
 
 ## Prioritization and Progress
 
 1. Completed:
     - Implemented Dask-compatible Bayesian GMM (BGM).
+        - `from dbgm import DBGM as BayesianGaussianMixture`
     - Modified DataTransformer methods to work with Dask.
+        - `from data_transformer import DistributedDataTransformer`
     - Ensured consistency with the original research code.
-
-2. In Progress:
+        - `pytest tests/test_transformers.py -v`
     - Reading and processing 1B records within 10 minutes.
-
-3. Pending:
-    - Tuning parameters and hyperparameters to handle extreme values in inverse transformations accurately.
+        - Status on local cluster with 4 workers, 2 threads per worker and 16GB memory limit:
+            - **~7mins** to transform and inverse transform **1B rows** of data.
+            - **~5mins** to fit the BGM model on **10M rows** of data.
+2. Pending:
+    - Tuning parameters and scaling constant to handle extreme values in inverse transformations accurately.
+    - Data validation.
+    - Bindings for remote clusters and cloud storage.
 
 
 ## Notes on Correctness and Consistency
@@ -61,3 +65,20 @@ This README explains the thought process, assumptions, steps, and code structure
 `requirements.txt`: Required packages.
 
 `run.ipynb`: Jupyter notebook for demo.
+
+`run.py`: Quick script to run the model fitting and transformation.
+
+
+## How to Run the Code
+
+1. Install the required packages:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+2. Run the Jupyter notebook `run.ipynb` for a demonstration of the code.
+
+3. Run tests using:
+    ```bash
+    pytest tests/test_transformers.py -v
+    ```
