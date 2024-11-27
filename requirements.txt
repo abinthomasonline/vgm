@@ -3,3 +3,5 @@ pandas
 jupyterlab
 black
 isort
+dask[complete]
+dask-ml
