@@ -5,3 +5,4 @@ black
 isort
 dask[complete]
 dask-ml
+pytest
