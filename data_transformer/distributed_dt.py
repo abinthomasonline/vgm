@@ -1,9 +1,11 @@
+import dask.array as da
+import dask.dataframe as dd
 import numpy as np
-import pandas as pd
-from sklearn.mixture import BayesianGaussianMixture
+
+from dbgm import DBGM as BayesianGaussianMixture
 
 
-class DataTransformer:
+class DistributedDataTransformer:
     """
     Transformer class responsible for processing data to train the CTABGANSynthesizer model
 
@@ -32,19 +34,21 @@ class DataTransformer:
 
     def __init__(
         self,
-        train_data=pd.DataFrame,
+        train_data=dd.DataFrame,
         categorical_list=[],
         mixed_dict={},
         n_clusters=10,
         eps=0.005,
+        verify_mode=False,
     ):
 
         self.meta = None
-        self.train_data = train_data
+        self.train_data = train_data.persist()
         self.categorical_columns = categorical_list
         self.mixed_columns = mixed_dict
         self.n_clusters = n_clusters
         self.eps = eps
+        self.verify_mode = verify_mode
         self.ordering = []
         self.output_info = []
         self.output_dim = 0
@@ -59,32 +63,35 @@ class DataTransformer:
         for index in range(self.train_data.shape[1]):
             column = self.train_data.iloc[:, index]
             if index in self.categorical_columns:
-                mapper = column.value_counts().index.tolist()
-                meta.append(
-                    {
-                        "name": index,
-                        "type": "categorical",
-                        "size": len(mapper),
-                        "i2s": mapper,
-                    }
-                )
+                raise NotImplementedError("Categorical columns are not implemented yet")
+                # mapper = column.value_counts().index.compute().tolist()
+                # meta.append(
+                #     {
+                #         "name": index,
+                #         "type": "categorical",
+                #         "size": len(mapper),
+                #         "i2s": mapper,
+                #     }
+                # )
             elif index in self.mixed_columns.keys():
-                meta.append(
-                    {
-                        "name": index,
-                        "type": "mixed",
-                        "min": column.min(),
-                        "max": column.max(),
-                        "modal": self.mixed_columns[index],
-                    }
-                )
+                raise NotImplementedError("Mixed columns are not implemented yet")
+                # meta.append(
+                #     {
+                #         "name": index,
+                #         "type": "mixed",
+                #         "min": column.min().compute(),
+                #         "max": column.max().compute(),
+                #         "modal": self.mixed_columns[index],
+                #     }
+                # )
             else:
+                col_min, col_max = da.compute(column.min(), column.max())
                 meta.append(
                     {
                         "name": index,
                         "type": "continuous",
-                        "min": column.min(),
-                        "max": column.max(),
+                        "min": col_min,
+                        "max": col_max,
                     }
                 )
 
@@ -92,7 +99,7 @@ class DataTransformer:
 
     def fit(self):
 
-        data = self.train_data.values
+        data = self.train_data.to_dask_array(lengths=True)
 
         # stores the corresponding bgm models for processing numeric data
         model = []
@@ -108,17 +115,14 @@ class DataTransformer:
                     max_iter=100,
                     n_init=1,
                     random_state=42,
+                    init_params="kmeans-sklearn" if self.verify_mode else "kmeans",
                     verbose=2,
                 )
-                gm.fit(data[:, id_].reshape([-1, 1]))
+                X = data[:, id_].reshape([-1, 1]).persist()
+                mode_freq = da.unique(gm.fit_predict(X)).compute()
                 model.append(gm)
                 # keeping only relevant modes that have higher weight than eps and are used to fit the data
                 old_comp = gm.weights_ > self.eps
-                mode_freq = (
-                    pd.Series(gm.predict(data[:, id_].reshape([-1, 1])))
-                    .value_counts()
-                    .keys()
-                )
                 comp = []
                 for i in range(self.n_clusters):
                     if (i in (mode_freq)) & old_comp[i]:
@@ -130,7 +134,8 @@ class DataTransformer:
                 self.output_dim += 1 + np.sum(comp)
 
             elif info["type"] == "mixed":
-
+                raise NotImplementedError("Mixed columns are not implemented yet")
+                """
                 # in case of mixed columns, two bgm models are used
                 gm1 = BayesianGaussianMixture(
                     self.n_clusters,
@@ -189,12 +194,17 @@ class DataTransformer:
                 ]
                 self.output_dim += 1 + np.sum(comp) + len(info["modal"])
 
+                """
+
             else:
+                raise NotImplementedError("Categorical columns are not implemented yet")
+                """
                 # in case of categorical columns, bgm model is ignored
                 model.append(None)
                 self.components.append(None)
                 self.output_info += [(info["size"], "softmax")]
                 self.output_dim += info["size"]
+                """
 
         self.model = model
 
@@ -211,46 +221,64 @@ class DataTransformer:
             current = data[:, id_]
             if info["type"] == "continuous":
                 # mode-specific normalization occurs here
-                current = current.reshape([-1, 1])
+                current = current.reshape([-1, 1]).persist()
                 # means and stds of the modes are obtained from the corresponding fitted bgm model
                 means = self.model[id_].means_.reshape((1, self.n_clusters))
                 stds = np.sqrt(self.model[id_].covariances_).reshape(
                     (1, self.n_clusters)
                 )
                 # values are then normalized and stored for all modes
-                features = np.empty(shape=(len(current), self.n_clusters))
+                # features = da.empty(shape=(len(current), self.n_clusters))
                 # note 4 is a multiplier to ensure values lie between -1 to 1 but this is not always guaranteed
                 features = (current - means) / (4 * stds)
 
                 # number of distict modes
                 n_opts = sum(self.components[id_])
                 # storing the mode for each data point by sampling from the probability mass distribution across all modes based on fitted bgm model
-                opt_sel = np.zeros(len(data), dtype="int")
-                probs = self.model[id_].predict_proba(current.reshape([-1, 1]))
+                probs = self.model[id_].predict_proba(current)
                 probs = probs[:, self.components[id_]]
-                np.random.seed(42)
-                for i in range(len(data)):
-                    pp = probs[i] + 1e-6
-                    pp = pp / sum(pp)
-                    opt_sel[i] = np.random.choice(np.arange(n_opts), p=pp)
+
+                if self.verify_mode:
+                    probs = probs.compute()
+                    opt_sel = np.zeros(len(data), dtype="int")
+                    np.random.seed(42)
+                    for i in range(len(data)):
+                        pp = probs[i] + 1e-6
+                        pp = pp / sum(pp)
+                        opt_sel[i] = np.random.choice(np.arange(n_opts), p=pp)
+                    opt_sel = da.from_array(opt_sel)
+                else:
+                    probs = probs + 1e-6
+                    probs = probs / probs.sum(axis=1, keepdims=True)
+                    cdf = probs.cumsum(axis=1)
+                    opt_sel = cdf.map_blocks(
+                        lambda x: np.argmax(
+                            np.random.uniform(size=(x.shape[0], 1)) < x, axis=1
+                        ),
+                        dtype=np.int64,
+                        drop_axis=1,
+                    )
 
                 # creating a one-hot-encoding for the corresponding selected modes
-                probs_onehot = np.zeros_like(probs)
-                probs_onehot[np.arange(len(probs)), opt_sel] = 1
+                probs_onehot = (
+                    opt_sel.flatten()
+                    .map_blocks(
+                        lambda x: np.eye(n_opts)[x],
+                        dtype=np.float64,
+                        new_axis=1,
+                        chunks=(opt_sel.chunks[0], n_opts),
+                    )
+                    .persist()
+                )
 
                 # obtaining the normalized values based on the appropriately selected mode and clipping to ensure values are within (-1,1)
-                idx = np.arange((len(features)))
                 features = features[:, self.components[id_]]
-                features = features[idx, opt_sel].reshape([-1, 1])
-                features = np.clip(features, -0.99, 0.99)
+                features = da.sum(features * probs_onehot, axis=1).reshape([-1, 1])
+                features = da.clip(features, -0.99, 0.99)
 
                 # re-ordering the one-hot-encoding of modes in descending order as per their frequency of being selected
-                re_ordered_phot = np.zeros_like(probs_onehot)
-                col_sums = probs_onehot.sum(axis=0)
-                n = probs_onehot.shape[1]
-                largest_indices = np.argsort(-1 * col_sums)[:n]
-                for id, val in enumerate(largest_indices):
-                    re_ordered_phot[:, id] = probs_onehot[:, val]
+                largest_indices = np.argsort((-1 * probs_onehot.sum(axis=0).compute()))
+                re_ordered_phot = probs_onehot[:, largest_indices]
 
                 # storing the original ordering for invoking inverse transform
                 self.ordering.append(largest_indices)
@@ -260,6 +288,8 @@ class DataTransformer:
 
             elif info["type"] == "mixed":
 
+                raise NotImplementedError("Mixed columns are not implemented yet")
+                """
                 # means and standard deviation of modes obtained from the first fitted bgm model
                 means_0 = self.model[id_][0].means_.reshape([-1])
                 stds_0 = np.sqrt(self.model[id_][0].covariances_).reshape([-1])
@@ -376,21 +406,25 @@ class DataTransformer:
                 values += [final_features, re_ordered_jhot]
 
                 mixed_counter = mixed_counter + 1
+                """
 
             else:
+                raise NotImplementedError("Categorical columns are not implemented yet")
+                """
                 # for categorical columns, standard one-hot-encoding is applied where categories are in descending order of frequency by default
                 self.ordering.append(None)
                 col_t = np.zeros([len(data), info["size"]])
                 idx = list(map(info["i2s"].index, current))
                 col_t[np.arange(len(data)), idx] = 1
                 values.append(col_t)
+                """
 
-        return np.concatenate(values, axis=1)
+        return da.concatenate(values, axis=1)
 
     def inverse_transform(self, data):
 
         # stores the final inverse transformed generated data
-        data_t = np.zeros([len(data), len(self.meta)])
+        data_t = []
 
         # used to iterate through the columns of the raw generated data
         st = 0
@@ -401,40 +435,44 @@ class DataTransformer:
 
                 # obtaining the generated normalized values and clipping for stability
                 u = data[:, st]
-                u = np.clip(u, -1, 1)
+                u = da.clip(u, -1, 1)
 
                 # obtaining the one-hot-encoding of the modes representing the normalized values
                 v = data[:, st + 1 : st + 1 + np.sum(self.components[id_])]
 
                 # re-ordering the modes as per their original ordering
                 order = self.ordering[id_]
-                v_re_ordered = np.zeros_like(v)
-                for id, val in enumerate(order):
-                    v_re_ordered[:, val] = v[:, id]
-                v = v_re_ordered
+                v = v[:, np.argsort(order)]
 
                 # ensuring un-used modes are represented with -100 such that they can be ignored when computing argmax
-                v_t = np.ones((data.shape[0], self.n_clusters)) * -100
-                v_t[:, self.components[id_]] = v
-                v = v_t
-
+                idx_map = []
+                for i in range(self.n_clusters):
+                    if self.components[id_][i]:
+                        idx_map.append(i)
+                idx_map = np.array(idx_map)
+                component_idx = da.argmax(v, axis=1).persist()
                 # obtaining approriate means and stds as per the appropriately selected mode for each data point based on fitted bgm model
                 means = self.model[id_].means_.reshape([-1])
                 stds = np.sqrt(self.model[id_].covariances_).reshape([-1])
-                p_argmax = np.argmax(v, axis=1)
-                std_t = stds[p_argmax]
-                mean_t = means[p_argmax]
+                std_t = component_idx.map_blocks(
+                    lambda x: stds[idx_map[x]], dtype=stds.dtype
+                )
+                mean_t = component_idx.map_blocks(
+                    lambda x: means[idx_map[x]], dtype=means.dtype
+                )
 
                 # executing the inverse transformation
                 tmp = u * 4 * std_t + mean_t
 
-                data_t[:, id_] = tmp
+                data_t.append(tmp.reshape([-1, 1]))
 
                 # moving to the next set of columns in the raw generated data in correspondance to original column information
                 st += 1 + np.sum(self.components[id_])
 
             elif info["type"] == "mixed":
 
+                raise NotImplementedError("Mixed columns are not implemented yet")
+                """
                 # obtaining the generated normalized values and corresponding modes
                 u = data[:, st]
                 u = np.clip(u, -1, 1)
@@ -487,11 +525,15 @@ class DataTransformer:
                 data_t[:, id_] = result
 
                 st += 1 + np.sum(self.components[id_]) + len(info["modal"])
+                """
 
             else:
+                raise NotImplementedError("Categorical columns are not implemented yet")
+                """
                 # reversing one hot encoding back to label encoding for categorical columns
                 current = data[:, st : st + info["size"]]
                 idx = np.argmax(current, axis=1)
                 data_t[:, id_] = list(map(info["i2s"].__getitem__, idx))
                 st += info["size"]
-        return data_t
+                """
+        return da.concatenate(data_t, axis=1)
