@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vgm-dask-client
+spec:
+  serviceAccountName: vgm-dask
+  restartPolicy: Never
+  containers:
+  - name: vgm-dask-client
+    image: 730335639508.dkr.ecr.us-east-2.amazonaws.com/vgm-dask/client-image
+    imagePullPolicy: Always
+    command: ["python"]
+    args: ["run_dask.py", "--n-files", "2000", "--n-partitions", "200", "--cpu", "2000m", "--memory", "4Gi", "--n-workers", "4"]
+    resources:
+      requests:
+        memory: "16Gi"
+        cpu: "8000m"
+      limits:
+        memory: "16Gi"
+        cpu: "8000m"

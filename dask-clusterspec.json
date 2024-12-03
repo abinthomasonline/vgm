@@ -1,0 +1,101 @@
+{
+    "apiVersion": "kubernetes.dask.org/v1",
+    "kind": "DaskCluster", 
+    "metadata": {"name": "my-dask-cluster-2"},
+    "spec": {
+        "idleTimeout": 0,
+        "worker": {
+            "replicas": null,
+            "spec": {
+                "serviceAccountName": "vgm-dask",
+                "containers": [
+                    {
+                        "name": "worker",
+                        "image": "730335639508.dkr.ecr.us-east-2.amazonaws.com/vgm-dask/worker-image:latest",
+                        "args": [
+                            "dask-worker",
+                            "--name", 
+                            "$(DASK_WORKER_NAME)",
+                            "--dashboard",
+                            "--dashboard-address",
+                            "8788"
+                        ],
+                        "env": null,
+                        "resources": {
+                            "limits": {"memory": "4Gi", "cpu": "2000m"},
+                            "requests": {"memory": "4Gi", "cpu": "2000m"}
+                        },
+                        "ports": [
+                            {
+                                "name": "http-dashboard",
+                                "containerPort": 8788,
+                                "protocol": "TCP"
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "scheduler": {
+            "spec": {
+                "serviceAccountName": "vgm-dask",
+                "containers": [
+                    {
+                        "name": "scheduler",
+                        "image": "730335639508.dkr.ecr.us-east-2.amazonaws.com/vgm-dask/worker-image:latest",
+                        "args": ["dask-scheduler", "--host", "0.0.0.0"],
+                        "env": null,
+                        "resources": {
+                            "limits": {"memory": "4Gi", "cpu": "2000m"},
+                            "requests": {"memory": "4Gi", "cpu": "2000m"}
+                        },
+                        "ports": [
+                            {
+                                "name": "tcp-comm",
+                                "containerPort": 8786,
+                                "protocol": "TCP"
+                            },
+                            {
+                                "name": "http-dashboard",
+                                "containerPort": 8787,
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "httpGet": {"port": "http-dashboard", "path": "/health"},
+                            "initialDelaySeconds": 0,
+                            "periodSeconds": 1,
+                            "timeoutSeconds": 300
+                        },
+                        "livenessProbe": {
+                            "httpGet": {"port": "http-dashboard", "path": "/health"},
+                            "initialDelaySeconds": 15,
+                            "periodSeconds": 20
+                        }
+                    }
+                ]
+            },
+            "service": {
+                "type": "ClusterIP",
+                "selector": {
+                    "dask.org/cluster-name": "my-dask-cluster-2",
+                    "dask.org/component": "scheduler"
+                },
+                "ports": [
+                    {
+                        "name": "tcp-comm",
+                        "protocol": "TCP",
+                        "port": 8786,
+                        "targetPort": "tcp-comm"
+                    },
+                    {
+                        "name": "http-dashboard",
+                        "protocol": "TCP",
+                        "port": 8787,
+                        "targetPort": "http-dashboard"
+                    }
+                ]
+            }
+        }
+    }
+}
