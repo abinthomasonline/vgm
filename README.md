@@ -29,7 +29,7 @@ This README explains the thought process, assumptions, steps, and code structure
 
 ## Performance comparison with NumPy
 - Handling Larger-than-Memory Data
-    The primary motivation for transitioning from NumPy to Dask is scalability. NumPy operates in-memory, making it unsuitable for datasets that exceed the available system memory. Dask, on the other hand, enables distributed computations, allowing it to handle datasets much larger than memory.
+    - The primary motivation for transitioning from NumPy to Dask is scalability. NumPy operates in-memory, making it unsuitable for datasets that exceed the available system memory. Dask, on the other hand, enables distributed computations, allowing it to handle datasets much larger than memory.
 - Speed Comparison
     - For computations that fit into memory, NumPy and Dask have comparable speeds.
     - Dask may exhibit slightly slower performance due to communication overhead between workers, especially in distributed setups.
