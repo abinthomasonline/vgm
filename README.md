@@ -95,6 +95,7 @@ This README explains the thought process, assumptions, steps, and code structure
     - Tuning parameters and scaling constant to handle extreme values in inverse transformations accurately.
     - Data validation.
     - GitHub Actions for testing, building docker images etc.
+    - Proper configuration management using .env files and k8s secrets/configmaps.
 
 
 ## Code Structure
