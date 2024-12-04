@@ -71,7 +71,12 @@ This README explains the thought process, assumptions, steps, and code structure
     kubectl apply -f run-dask.yaml    # Distributed run
     ```
 
-4. Run tests using:
+4. Port-forward the scheduler service to access the dask dashboard:
+    ```bash
+    kubectl port-forward service/my-dask-cluster-2-scheduler 8787:8787
+    ```
+
+5. Run tests using:
     ```bash
     pytest tests/test_transformers.py -v
     ```
@@ -86,7 +91,26 @@ This README explains the thought process, assumptions, steps, and code structure
     - Ensured consistency with the original research code.
         - `pytest tests/test_transformers.py -v`
     - Reading and processing 1B records within 10 minutes.
-        - Status on local cluster with **4 workers**, **2 threads per worker** and **16GB memory limit**:
+        - Status on remote cluster with **4 workers**, **2 cpu per worker** and **16GB memory limit**:
+            - **~7mins** to fit the BGM model on **10M rows** of data.
+            - **~32secs** to transform **10M rows** of data.
+            - **~8secs** to inverse transform **10M rows** of data.
+        - Extrapolation to 1B rows:
+            - fit()
+                - During fit(), >60% of the time is spent on network communication between workers (red region in the chart below).
+                - ![dashboard](dashboard.gif)
+                - The network communication time taken increases logarithmically with the number of workers, like any accumulative operation.
+                - The cpu time remains constant with the number of workers, since the number of rows processed per worker is the same.
+                - We might save some time on read and write due to disk spills with more workers.
+                - From the above assumptions, I am approximating the time taken to fit the BGM model on 1B rows to be less than 20 mins with 40 workers.
+                - .3 + .6*(D(40>1) + D(10>1) + D(2.5>1) + 1) = 2.5, where D(bool) = 1 if true, 0 otherwise.
+            - transform()
+                - transform() is purely element-wise, except for one accumulation to sort the components.
+                - The time taken should remain constant. <1min for 1B rows.
+            - inverse_transform()
+                - inverse_transform() is also purely element-wise.
+                - The time taken should remain constant. ~8secs for 1B rows.
+        - Status on local cluster with 4 workers, 2 threads per worker and 16GB memory limit:
             - **~7mins** to transform and inverse transform **1B rows** of data.
             - **~5mins** to fit the BGM model on **10M rows** of data.
     - Bindings for remote clusters and cloud storage.
@@ -96,6 +120,9 @@ This README explains the thought process, assumptions, steps, and code structure
     - Data validation.
     - GitHub Actions for testing, building docker images etc.
     - Proper configuration management using .env files and k8s secrets/configmaps.
+
+
+
 
 
 ## Code Structure
